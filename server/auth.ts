@@ -1,6 +1,6 @@
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
-import { Express } from "express";
+import { Express, Request, Response, NextFunction } from "express";
 import session from "express-session";
 import { scrypt, randomBytes, timingSafeEqual } from "crypto";
 import { promisify } from "util";
@@ -41,52 +41,102 @@ export function setupAuth(app: Express) {
   app.use(passport.initialize());
   app.use(passport.session());
 
+  // Local strategy
   passport.use(
-    new LocalStrategy(async (username, password, done) => {
-      const user = await storage.getUserByUsername(username);
-      if (!user || !(await comparePasswords(password, user.password))) {
-        return done(null, false);
-      } else {
+    new LocalStrategy(async (username: string, password: string, done: (err: Error | null, user?: SelectUser | false, info?: { message: string }) => void) => {
+      try {
+        const user = await storage.getUserByUsername(username);
+        if (!user || !(await comparePasswords(password, user.password))) {
+          return done(null, false, { message: "Invalid username or password" });
+        }
         return done(null, user);
+      } catch (err: any) {
+        return done(err);
       }
-    }),
+    })
   );
 
-  passport.serializeUser((user, done) => done(null, user.id));
-  passport.deserializeUser(async (id: string, done) => {
-    const user = await storage.getUser(id);
-    done(null, user);
+  // Serialize / Deserialize
+  passport.serializeUser((user: SelectUser, done: (err: Error | null, id?: string) => void) => {
+    done(null, user.id);
   });
 
-  app.post("/api/register", async (req, res, next) => {
-    const existingUser = await storage.getUserByUsername(req.body.username);
-    if (existingUser) {
-      return res.status(400).send("Username already exists");
+  passport.deserializeUser(async (id: string, done: (err: Error | null, user?: SelectUser | false) => void) => {
+    try {
+      const user = await storage.getUser(id);
+      done(null, user || false);
+    } catch (err: any) {
+      done(err);
     }
-
-    const user = await storage.createUser({
-      ...req.body,
-      password: await hashPassword(req.body.password),
-    });
-
-    req.login(user, (err) => {
-      if (err) return next(err);
-      res.status(201).json(user);
-    });
   });
 
-  app.post("/api/login", passport.authenticate("local"), (req, res) => {
-    res.status(200).json(req.user);
+  // Registration route
+  app.post("/api/register", async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { username, password, email, firstName, lastName } = req.body;
+
+      if (!username || !password || !email || !firstName || !lastName) {
+        return res.status(400).json({ error: "All fields are required." });
+      }
+
+      const hashedPassword = await hashPassword(password);
+      const user = await storage.createUser({
+        username,
+        password: hashedPassword,
+        email,
+        firstName,
+        lastName,
+      });
+
+      req.login(user, (err: Error | undefined) => {
+        if (err) return next(err);
+        res.status(201).json(user);
+      });
+    } catch (error: any) {
+      if (
+        error.message === "Username already exists." ||
+        error.message === "Email already exists."
+      ) {
+        return res.status(400).json({ error: error.message });
+      }
+      console.error("Error during registration:", error);
+      res.status(500).json({ error: "Internal server error." });
+    }
   });
 
-  app.post("/api/logout", (req, res, next) => {
-    req.logout((err) => {
+  // Login route
+  app.post("/api/login", (req: Request, res: Response, next: NextFunction) => {
+    passport.authenticate(
+      "local",
+      (err: Error | null, user?: SelectUser | false, info?: { message?: string }) => {
+        if (err) {
+          console.error("Login error:", err);
+          return res.status(500).json({ error: "Internal server error" });
+        }
+        if (!user) {
+          return res.status(401).json({ error: info?.message || "Invalid credentials" });
+        }
+        req.login(user, (err: Error | undefined) => {
+          if (err) {
+            console.error("Login session error:", err);
+            return res.status(500).json({ error: "Internal server error" });
+          }
+          res.status(200).json(user);
+        });
+      }
+    )(req, res, next);
+  });
+
+  // Logout
+  app.post("/api/logout", (req: Request, res: Response, next: NextFunction) => {
+    req.logout((err: Error | undefined) => {
       if (err) return next(err);
       res.sendStatus(200);
     });
   });
 
-  app.get("/api/user", (req, res) => {
+  // Get current user
+  app.get("/api/user", (req: Request, res: Response) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     res.json(req.user);
   });

@@ -89,11 +89,27 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
-    const [user] = await db
-      .insert(users)
-      .values(insertUser)
-      .returning();
-    return user;
+    try {
+      console.log("Inserting user into database:", insertUser);
+      const [user] = await db
+        .insert(users)
+        .values(insertUser)
+        .returning();
+      console.log("Inserted user:", user);
+      return user;
+    } catch (error: any) {
+      if (error.code === '23505') { // Unique constraint violation
+        const constraint = error.detail.match(/\((.*?)\)/)?.[1];
+        throw new Error(
+          constraint === 'username'
+            ? 'Username already exists.'
+            : constraint === 'email'
+            ? 'Email already exists.'
+            : 'Unique constraint violation.'
+        );
+      }
+      throw error; // Re-throw other errors
+    }
   }
 
   // Transaction methods

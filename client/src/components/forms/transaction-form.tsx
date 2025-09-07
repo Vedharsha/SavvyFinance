@@ -14,6 +14,7 @@ import { z } from "zod";
 
 const transactionFormSchema = insertTransactionSchema.extend({
   date: z.string().min(1, "Date is required"),
+  amount: z.number({ invalid_type_error: "Amount is required." }).positive("Amount must be greater than 0."),
 });
 
 type TransactionFormData = z.infer<typeof transactionFormSchema>;
@@ -46,7 +47,7 @@ export function TransactionForm({ transaction, onSuccess }: TransactionFormProps
   const form = useForm<TransactionFormData>({
     resolver: zodResolver(transactionFormSchema),
     defaultValues: {
-      amount: transaction?.amount || "",
+      amount: transaction?.amount ? parseFloat(transaction.amount) : undefined,
       description: transaction?.description || "",
       category: transaction?.category || "Other",
       type: transaction?.type || "expense",
@@ -58,6 +59,7 @@ export function TransactionForm({ transaction, onSuccess }: TransactionFormProps
     mutationFn: async (data: TransactionFormData) => {
       const response = await apiRequest("POST", "/api/transactions", {
         ...data,
+        amount: String(data.amount),
         date: new Date(data.date).toISOString(),
       });
       return response.json();
@@ -84,6 +86,7 @@ export function TransactionForm({ transaction, onSuccess }: TransactionFormProps
     mutationFn: async (data: TransactionFormData) => {
       const response = await apiRequest("PUT", `/api/transactions/${transaction!.id}`, {
         ...data,
+        amount: String(data.amount),
         date: new Date(data.date).toISOString(),
       });
       return response.json();
@@ -142,7 +145,7 @@ export function TransactionForm({ transaction, onSuccess }: TransactionFormProps
             type="number"
             step="0.01"
             placeholder="0.00"
-            {...form.register("amount")}
+            {...form.register("amount", { valueAsNumber: true })}
             disabled={isPending}
             data-testid="input-transaction-amount"
           />

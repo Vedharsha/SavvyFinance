@@ -5,7 +5,38 @@ import { storage } from "./storage";
 import { insertTransactionSchema, insertBudgetSchema, insertGoalSchema } from "@shared/schema";
 import { z } from "zod";
 
+const transactionPayloadSchema = insertTransactionSchema.extend({
+  date: z.coerce.date(),
+});
+
 export function registerRoutes(app: Express): Server {
+  // Budget alerts helper function
+  async function checkBudgetAlerts(userId: string, category: string, month: number, year: number) {
+    try {
+      const budget = await storage.getBudgetByCategory(userId, category, month, year);
+      if (!budget) return;
+
+      const startDate = new Date(year, month - 1, 1);
+      const endDate = new Date(year, month, 0, 23, 59, 59);
+      
+      const transactions = await storage.getTransactionsByDateRange(userId, startDate, endDate);
+      const categoryTransactions = transactions.filter(t => t.category === category && t.type === 'expense');
+      
+      const totalSpent = categoryTransactions.reduce((sum, t) => sum + parseFloat(t.amount), 0);
+
+      if (totalSpent > parseFloat(budget.amount)) {
+        await storage.createNotification({
+          userId,
+          title: 'Budget Alert',
+          message: `You have exceeded your budget for ${category} this month.`,
+          type: 'budget_alert',
+        });
+      }
+    } catch (error) {
+      console.error('Error checking budget alerts:', error);
+    }
+  }
+
   // Setup authentication routes
   setupAuth(app);
 
@@ -26,7 +57,7 @@ export function registerRoutes(app: Express): Server {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     
     try {
-      const validatedData = insertTransactionSchema.parse(req.body);
+      const validatedData = transactionPayloadSchema.parse(req.body);
       const transaction = await storage.createTransaction({
         ...validatedData,
         userId: req.user!.id,
@@ -51,7 +82,7 @@ export function registerRoutes(app: Express): Server {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     
     try {
-      const validatedData = insertTransactionSchema.partial().parse(req.body);
+      const validatedData = transactionPayloadSchema.partial().parse(req.body);
       const transaction = await storage.updateTransaction(req.params.id, validatedData);
       
       if (!transaction) {
@@ -277,42 +308,6 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  // Budget alerts helper function
-  async function checkBudgetAlerts(userId: string, category: string, month: number, year: number) {
-    try {
-      const budget = await storage.getBudgetByCategory(userId, category, month, year);
-      if (!budget) return;
-
-      const startDate = new Date(year, month - 1, 1);
-      const endDate = new Date(year, month, 0, 23, 59, 59);
-      
-      const transactions = await storage.getTransactionsByDateRange(userId, startDate, endDate);
-      const categoryTransactions = transactions.filter(t => t.category === category && t.type === 'expense');
-      
-      const totalSpent = categoryTransactions.reduce((sum, t) => sum + parseFloat(t.amount), 0);
-      const budgetAmount = parseFloat(budget.amount);
-      const percentage = (totalSpent / budgetAmount) * 100;
-
-      if (percentage >= 80 && percentage < 100) {
-        await storage.createNotification({
-          userId,
-          title: `Budget Alert - ${category}`,
-          message: `You've spent ${percentage.toFixed(1)}% of your ${category} budget this month (₹${totalSpent.toLocaleString()} of ₹${budgetAmount.toLocaleString()})`,
-          type: 'warning',
-        });
-      } else if (percentage >= 100) {
-        await storage.createNotification({
-          userId,
-          title: `Budget Exceeded - ${category}`,
-          message: `You've exceeded your ${category} budget by ₹${(totalSpent - budgetAmount).toLocaleString()}`,
-          type: 'warning',
-        });
-      }
-    } catch (error) {
-      console.error('Error checking budget alerts:', error);
-    }
-  }
-
-  const httpServer = createServer(app);
-  return httpServer;
+  const server = createServer(app);
+  return server;
 }

@@ -11,6 +11,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { insertUserSchema } from "@shared/schema";
 import { z } from "zod";
 import { Loader2 } from "lucide-react";
+import { useEffect } from "react";
 
 const loginSchema = insertUserSchema.pick({ username: true, password: true });
 const registerSchema = insertUserSchema.extend({
@@ -28,10 +29,11 @@ export default function AuthPage() {
   const [, setLocation] = useLocation();
 
   // Redirect if already logged in
-  if (user) {
-    setLocation("/");
-    return null;
-  }
+  useEffect(() => {
+    if (user) {
+      setLocation("/");
+    }
+  }, [user, setLocation]);
 
   const loginForm = useForm<LoginData>({
     resolver: zodResolver(loginSchema),
@@ -69,6 +71,10 @@ export default function AuthPage() {
       },
     });
   };
+
+  if (user) {
+    return null; // Keep a loading state or return null while redirecting
+  }
 
   return (
     <div className="min-h-screen flex">
